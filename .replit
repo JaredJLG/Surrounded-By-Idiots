@@ -10,6 +10,7 @@ guessImports = true
 
 [nix]
 channel = "stable-23_05"
+packages = ["libxcrypt", "pkg-config", "xsimd"]
 
 [[ports]]
 localPort = 81

@@ -1,73 +1,320 @@
----FILE:ai_prompts.py---
-def get_system_prompt():
-    """
-    This function holds the master system prompt for the AI.
-    It "teaches" the AI the 4-color model and tells it how to behave,
-    now with a much more specific format and reasoning guide.
-    """
-    return """
-You are an expert personality analyst. Your goal is to analyze a user's Big Five personality scores and translate them into the 4-color personality model described in Thomas Erikson's "Surrounded by Idiots".
+---FILE:main.py---
+import os
+import openai
+import json
+from scipy.stats import norm
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
+from markdown import markdown
+from markupsafe import Markup
+from dotenv import load_dotenv
 
---- 4-COLOR MODEL CONTEXT ---
-- The vertical axis is Active/Extroverted (Reds/Yellows) vs. Passive/Introverted (Greens/Blues).
-- The horizontal axis is Task-Oriented (Reds/Blues) vs. Relationship-Oriented (Yellows/Greens).
+# Load environment variables from a .env file for local development
+load_dotenv()
 
-- RED (Dominant): Active, task-oriented. Confident, ambitious, decisive. Can be impatient and controlling.
-- YELLOW (Inspiring): Active, relationship-oriented. Enthusiastic, optimistic, social, creative. Can be disorganized and impulsive.
-- GREEN (Stable): Passive, relationship-oriented. Calm, supportive, patient, loyal. Avoids conflict and change.
-- BLUE (Compliant/Analytical): Passive, task-oriented. Precise, logical, detail-oriented, high-quality work. Can be critical and reserved.
---- END OF CONTEXT ---
+# Import the new, rigorous quiz content and scoring data
+from quiz_content_ipip120 import IPIP_120_QUESTIONS
+from normative_data import FACET_NORMS, TRAIT_NORMS
+from ai_prompts import get_system_prompt, get_color_prompt, get_romance_prompt, get_work_prompt
 
---- HEURISTICS FOR TRAIT MAPPING ---
-- **Extraversion:** This is the strongest indicator for the Active/Passive axis. High scores strongly suggest Red/Yellow. Low scores strongly suggest Green/Blue.
-- **Agreeableness:** This is the strongest indicator for the Task/Relationship axis. High scores suggest Yellow/Green. Low scores suggest Red/Blue.
-- **Conscientiousness:** High scores strongly suggest Blue (orderly, dutiful) and can be a component of Red (achievement-oriented). Low scores are common in Yellows (disorganized) and can be seen in Reds who bend rules.
-- **Neuroticism:** This measures emotional stability. Very LOW scores are characteristic of stable Green and Blue types. High scores indicate emotional reactivity, which can be a weakness for any color.
-- **Openness to Experience:** This is nuanced. High Openness as "Intellect" (interest in ideas, logic) points to Blue. High Openness as "Aesthetics" (creativity, novelty) points to Yellow.
---- END OF HEURISTICS ---
+# --- APP SETUP ---
+app = Flask(__name__)
 
---- YOUR TASK ---
-Analyze the user's Big Five scores and produce a personality profile. You MUST follow this structure EXACTLY.
+# --- PHASE 1 UPGRADE: Production-ready configuration ---
+# Use environment variables for all secrets and configs.
+# This makes the app secure and configurable for deployment.
 
-1.  **Primary Color Section:**
-    -   Identify the best-fitting Primary Color.
-    -   Write a "Why?" section with a bulleted list. Each point MUST connect a specific Big Five score to a characteristic of the color, using terms like "High," "Low," or "Average."
-    -   **Crucially, if a trait seems to contradict the primary color, acknowledge and explain it.** For example, if someone is Blue but has Low Conscientiousness, call them an "unconventional Blue" who values logic over rigid structure.
+# 1. Secret Key: Must be a persistent, secret string.
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+if not app.config['SECRET_KEY']:
+    raise ValueError("FATAL_ERROR: No SECRET_KEY set for the application. Please set it in your environment.")
 
-2.  **Secondary Color Section:**
-    -   Identify the best-fitting Secondary Color.
-    -   Write a "Why?" section just like the one for the primary color, explaining the choice based on the remaining traits.
+# 2. Database URI: Switched from SQLite to PostgreSQL for production.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+if not app.config['SQLALCHEMY_DATABASE_URI']:
+    raise ValueError("FATAL_ERROR: No DATABASE_URL set for the application. Please set it in your environment.")
 
-3.  **Final Verdict Section:**
-    -   Start with the header "Final Verdict:".
-    -   Provide a summary line with emojis (e.g., "🟦🔸 Primary: Blue | Secondary: Yellow").
-    -   Write a single, insightful summary sentence.
-    -   Provide a bulleted list with these three points, formatted with bolding: "**In a team:**", "**In conflict:**", and "**What might annoy you:**".
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-Use the following as a perfect example of the desired tone and structure.
+# 3. OpenAI API Key
+app.config['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
+if app.config['OPENAI_API_KEY']:
+    openai.api_key = app.config['OPENAI_API_KEY']
+else:
+    print("WARNING: OPENAI_API_KEY secret not found. AI analysis will fail.")
+    openai.api_key = None
+# --- END PHASE 1 UPGRADE ---
 
---- PERFECT EXAMPLE OF OUTPUT ---
-### 🔵 Primary Color: Blue (Analytical)
-#### Why Blue?
-- Your High Openness (Intellect) score shows a strong preference for data, logic, and abstract thinking, which is the core of the Blue personality.
-- Your Very Low Neuroticism indicates you are calm and not easily rattled, fitting the stable, passive nature of a Blue.
-- Your Low Conscientiousness is an interesting contrast. This makes you an **unconventional Blue**—one who is focused on logical accuracy but is less concerned with rigid rules and traditional structures.
 
-### 🟡 Secondary Color: Yellow (Inspiring)
-#### Why Yellow as a Secondary?
-- Your High Extraversion is the clearest indicator, pointing to a sociable, talkative, and enthusiastic nature common in Yellows.
-- Your High Openness (creativity) also aligns with the visionary and idea-generating side of the Yellow personality.
+db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
 
-### Final Verdict:
-**Primary:** 🟦 Blue | **Secondary:** 🟡 Yellow
+@app.after_request
+def session_cleanup(response):
+    db.session.remove()
+    return response
 
-You are a rare and powerful mix of analytical thinker and optimistic communicator.
+@app.template_filter('markdown')
+def markdown_filter(s):
+    if s is None: return ""
+    return Markup(markdown(s, extensions=['fenced_code', 'tables']))
 
-- **In a team:** You likely bring deep, well-reasoned insights but can also energize the group and explain complex ideas in an inspiring way.
-- **In conflict:** You remain calm and prefer to use logic, but you are not afraid to be sociable and talk through a solution.
-- **What might annoy you:** Hasty decisions without data, emotional overreactions, and being forced to follow inefficient rules.
---- END OF PERFECT EXAMPLE ---
+# --- DATABASE MODELS (No changes needed) ---
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    results = db.relationship('QuizResult', backref='user', lazy=True)
 
-Now, begin your analysis of the user's scores. Do not add any introductory text before the first heading.
-"""
+    def set_password(self, password): self.password_hash = generate_password_hash(password)
+    def check_password(self, password): return check_password_hash(self.password_hash, password)
+
+class QuizResult(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    agreeableness = db.Column(db.Integer, nullable=False)
+    conscientiousness = db.Column(db.Integer, nullable=False)
+    extraversion = db.Column(db.Integer, nullable=False)
+    neuroticism = db.Column(db.Integer, nullable=False)
+    openness = db.Column(db.Integer, nullable=False)
+    facet_scores_json = db.Column(db.Text, nullable=True)
+    ai_feedback = db.Column(db.Text, nullable=True)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# --- ROUTES (No changes needed) ---
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('profile'))
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
+            login_user(user)
+            return redirect(url_for('profile'))
+        else:
+            flash('Invalid username or password.', 'error')
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('profile'))
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash('Username already exists. Please choose another.', 'error')
+        else:
+            new_user = User(username=username)
+            new_user.set_password(password)
+            db.session.add(new_user)
+            db.session.commit()
+            flash('Registration successful! Please log in.', 'success')
+            return redirect(url_for('login'))
+    return render_template('register.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
+
+@app.route('/profile')
+@login_required
+def profile():
+    past_results = QuizResult.query.filter_by(user_id=current_user.id).order_by(QuizResult.timestamp.desc()).all()
+    return render_template('profile.html', user=current_user, results=past_results)
+
+@app.route('/quiz')
+@login_required
+def quiz():
+    return render_template('quiz.html', questions=IPIP_120_QUESTIONS)
+
+@app.route('/submit_quiz', methods=['POST'])
+@login_required
+def submit_quiz():
+    facet_scores_raw = {facet: 0 for facet in FACET_NORMS.keys()}
+    trait_scores_raw = {trait: 0 for trait in TRAIT_NORMS.keys()}
+    for q in IPIP_120_QUESTIONS:
+        answer = request.form.get(f'q_{q["id"]}')
+        if not answer:
+            flash(f"Question {q['id']} was not answered. Please complete the entire quiz.", 'error')
+            return redirect(url_for('quiz'))
+        value = int(answer)
+        score = (6 - value) if q['direction'] == -1 else value
+        facet_scores_raw[q['facet']] += score
+        trait_scores_raw[q['trait']] += score
+    facet_percentiles = {
+        facet: int(round(norm.cdf(raw_score, loc=mean, scale=sd) * 100))
+        for facet, raw_score in facet_scores_raw.items()
+        for f, (mean, sd) in FACET_NORMS.items() if f == facet
+    }
+    trait_percentiles = {
+        trait: int(round(norm.cdf(raw_score, loc=mean, scale=sd) * 100))
+        for trait, raw_score in trait_scores_raw.items()
+        for t, (mean, sd) in TRAIT_NORMS.items() if t == trait
+    }
+    new_result = QuizResult(
+        user_id=current_user.id,
+        agreeableness=trait_percentiles['agreeableness'],
+        conscientiousness=trait_percentiles['conscientiousness'],
+        extraversion=trait_percentiles['extraversion'],
+        neuroticism=trait_percentiles['neuroticism'],
+        openness=trait_percentiles['openness'],
+        facet_scores_json=json.dumps(facet_percentiles),
+        ai_feedback=None
+    )
+    db.session.add(new_result)
+    db.session.commit()
+    return redirect(url_for('analyzing_results', result_id=new_result.id))
+
+def format_ai_message(trait_scores, facet_scores):
+    message = "Analyze the following personality profile.\n\n"
+    message += "--- OVERALL TRAIT SCORES (Percentiles) ---\n"
+    for trait, score in trait_scores.items():
+        message += f"- {trait.replace('_', ' ').title()}: {score}%\n"
+    message += "\n--- FACET SCORES (Percentiles) ---\n"
+    for facet, score in facet_scores.items():
+        message += f"- {facet.replace('_', ' ').title()}: {score}%\n"
+    return message
+
+def get_ai_feedback(trait_scores, facet_scores):
+    if not openai.api_key:
+        return "### 🚨 Configuration Error\n\nThe OpenAI API key is missing. The administrator needs to set the `OPENAI_API_KEY` in the Replit Secrets panel."
+    system_prompt = get_system_prompt()
+    user_message = format_ai_message(trait_scores, facet_scores)
+    try:
+        completion = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}],
+            temperature=0.6,
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        print(f"OpenAI API call failed: {e}")
+        return f"### 😢 AI Analysis Failed\n\nThere was a problem communicating with the AI model.\n\n**Error Details:** `{e}`"
+
+@app.route('/analyzing/<int:result_id>')
+@login_required
+def analyzing_results(result_id):
+    result = db.session.get(QuizResult, result_id)
+    if not result or result.user_id != current_user.id:
+        flash('You do not have permission to view this result.', 'error')
+        return redirect(url_for('profile'))
+    return render_template('analyzing.html', result_id=result_id)
+
+@app.route('/get_ai_analysis/<int:result_id>')
+@login_required
+def get_ai_analysis(result_id):
+    result = db.session.get(QuizResult, result_id)
+    if not result or result.user_id != current_user.id:
+        return jsonify({'status': 'error', 'message': 'Permission denied'}), 403
+    if result.ai_feedback:
+        return jsonify({'status': 'complete'})
+    trait_scores = {
+        'agreeableness': result.agreeableness, 'conscientiousness': result.conscientiousness,
+        'extraversion': result.extraversion, 'neuroticism': result.neuroticism, 'openness': result.openness
+    }
+    facet_scores = json.loads(result.facet_scores_json)
+    feedback = get_ai_feedback(trait_scores, facet_scores)
+    result.ai_feedback = feedback
+    db.session.commit()
+    return jsonify({'status': 'complete'})
+
+@app.route('/results/<int:result_id>')
+@login_required
+def results(result_id):
+    result = db.session.get(QuizResult, result_id)
+    if not result or result.user_id != current_user.id:
+        flash('You do not have permission to view this result.', 'error')
+        return redirect(url_for('profile'))
+    if not result.ai_feedback:
+        return redirect(url_for('analyzing_results', result_id=result.id))
+    return render_template('results.html', result=result)
+
+@app.route('/get_extra_analysis/<int:result_id>/<analysis_type>', methods=['GET'])
+@login_required
+def get_extra_analysis(result_id, analysis_type):
+    result = db.session.get(QuizResult, result_id)
+    if not result or result.user_id != current_user.id:
+        return jsonify({'error': 'Permission denied'}), 403
+    trait_scores = {
+        'agreeableness': result.agreeableness, 'conscientiousness': result.conscientiousness,
+        'extraversion': result.extraversion, 'neuroticism': result.neuroticism, 'openness': result.openness
+    }
+    facet_scores = json.loads(result.facet_scores_json)
+    prompts = {
+        "color": get_color_prompt(),
+        "romance": get_romance_prompt(),
+        "work": get_work_prompt()
+    }
+    system_prompt = prompts.get(analysis_type)
+    if not system_prompt:
+        return jsonify({'error': 'Invalid analysis type'}), 400
+    user_message = format_ai_message(trait_scores, facet_scores)
+    try:
+        completion = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}],
+            temperature=0.7,
+        )
+        feedback = completion.choices[0].message.content
+        return jsonify({'feedback': feedback})
+    except Exception as e:
+        print(f"OpenAI API call for {analysis_type} failed: {e}")
+        return jsonify({'error': f'AI analysis failed: {e}'}), 500
+
+
+if __name__ == '__main__':
+    # This block is now ONLY for local development.
+    # In production, a Gunicorn server will run the 'app' object directly.
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=81)
+
+---END_FILE---
+---FILE:pyproject.toml---
+[tool.poetry]
+name = "workspace"
+version = "0.1.0"
+description = ""
+authors = ["JaredJLG <147558015+JaredJLG@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+flask = "^3.0.0"
+flask-sqlalchemy = "^3.1.1"
+flask-login = "^0.6.3"
+werkzeug = "^3.0.0"
+openai = "^1.12.0"
+markdown = "^3.5.2"
+scipy = "^1.11.4"
+markupsafe = "^3.0.2"
+# --- PHASE 1 UPGRADES ---
+gunicorn = "^22.0.0"          # Production-grade web server
+psycopg2-binary = "^2.9.9"   # PostgreSQL database driver
+python-dotenv = "^1.0.1"       # Loads .env file for local development
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 ---END_FILE---

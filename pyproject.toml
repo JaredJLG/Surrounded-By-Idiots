@@ -7,16 +7,19 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-flask = "^3.1.1"
+flask = "^3.0.0"
 flask-sqlalchemy = "^3.1.1"
 flask-login = "^0.6.3"
-werkzeug = "^3.1.3"
+werkzeug = "^3.0.0"
 openai = "^1.12.0"
 markdown = "^3.5.2"
-# Flask-Migrate is no longer needed for this simpler approach
+scipy = "^1.11.4"
 markupsafe = "^3.0.2"
-
+# --- PHASE 1 UPGRADES ---
+gunicorn = "^22.0.0"          # Production-grade web server
+psycopg2-binary = "^2.9.9"   # PostgreSQL database driver
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
