@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome - DISA Personality Quiz{% endblock %}
+
+{% block content %}
+<div class="hero" style="text-align: center;">
+    <h1>Discover Your Personality Color</h1>
+    <p>Based on the popular "Surrounded by Idiots" four-color model, this quiz will help you understand your primary communication style, motivations, and strengths.</p>
+
+    <p>To begin, please log in or create an account. Your results will be saved to your profile.</p>
+
+    <div class="cta-buttons" style="margin-top: 1.5rem;">
+        {% if not current_user.is_authenticated %}
+            <a href="{{ url_for('login') }}" class="btn btn-primary btn-large">Login</a>
+            <a href="{{ url_for('register') }}" class="btn btn-secondary">Register</a>
+        {% else %}
+             <a href="{{ url_for('quiz') }}" class="btn btn-primary btn-large">Take a New Quiz</a>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,76 @@
+---FILE:templates/analyzing.html---
+{% extends "base.html" %}
+
+{% block title %}Analyzing Your Results...{% endblock %}
+
+{% block content %}
+<div class="analyzing-container">
+    <div class="spinner"></div>
+    <h1>Analyzing Your Personality</h1>
+    <p>Please wait a moment while our AI generates your personalized feedback. This can take up to 30 seconds.</p>
+    <p>You will be redirected automatically when it's ready.</p>
+</div>
+
+<style>
+.analyzing-container {
+    text-align: center;
+    padding: 4rem 1rem;
+    background: var(--card-bg);
+    border-radius: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+.spinner {
+    margin: 0 auto 2rem auto;
+    border: 8px solid #f3f3f3; /* Light grey */
+    border-top: 8px solid var(--primary-color, #1976D2); /* Blue */
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1.5s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // THE FIX: Use the |tojson filter to safely pass the variable to JavaScript.
+    const resultId = {{ result_id|tojson }};
+    const finalUrl = `/results/${resultId}`;
+
+    function pollForResult() {
+        // We use a timeout to give the server a moment to start the AI task
+        setTimeout(() => {
+            fetch(`/get_ai_analysis/${resultId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'complete') {
+                        // Success! Redirect to the final results page.
+                        window.location.href = finalUrl;
+                    } else {
+                        // This case is unlikely now but good for robustness
+                        console.log('Analysis not yet complete, trying again...');
+                        pollForResult(); // Re-call the function to poll again
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching analysis:', error);
+                    const container = document.querySelector('.analyzing-container');
+                    container.innerHTML = '<h1>Error</h1><p>There was a problem generating your analysis. Please try taking the quiz again later.</p>';
+                });
+        }, 3000); // Start the first fetch after a 3-second delay
+    }
+
+    // Start the process
+    pollForResult();
+});
+</script>
+
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Take the Quiz{% endblock %}
+
+{% block content %}
+<div class="quiz-container">
+    <h2>The Big Five Personality Assessment</h2>
+    <p>Please answer the following 50 questions honestly. For each statement, indicate how accurately it describes you.</p>
+
+    <form method="POST" action="{{ url_for('submit_quiz') }}" id="quizForm">
+        <div class="likert-scale-header">
+            <span>Strongly Disagree</span>
+            <span>Disagree</span>
+            <span>Neutral</span>
+            <span>Agree</span>
+            <span>Strongly Agree</span>
+        </div>
+
+        {% for q in questions %}
+        <div class="question-block" id="q-block-{{ q.id }}">
+            <p class="question-text"><strong>{{ q.id }}.</strong> {{ q.text }}</p>
+            <div class="likert-options">
+                <label><input type="radio" name="q_{{ q.id }}" value="1" required><span></span></label>
+                <label><input type="radio" name="q_{{ q.id }}" value="2" required><span></span></label>
+                <label><input type="radio" name="q_{{ q.id }}" value="3" required><span></span></label>
+                <label><input type="radio" name="q_{{ q.id }}" value="4" required><span></span></label>
+                <label><input type="radio" name="q_{{ q.id }}" value="5" required><span></span></label>
+            </div>
+        </div>
+        {% endfor %}
+
+        <button type="submit" class="btn btn-primary btn-large">Submit & See My AI Analysis</button>
+    </form>
+</div>
+
+<style>
+.likert-scale-header {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--secondary-color);
+    margin-bottom: 1rem;
+    padding: 0 5%; /* Adjust to align with radio buttons */
+}
+.question-block {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.question-text {
+    margin-bottom: 1rem;
+}
+.likert-options {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    text-align: center;
+    align-items: center;
+    padding: 0 5%;
+}
+.likert-options label {
+    cursor: pointer;
+}
+.likert-options input[type="radio"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--card-bg);
+    margin: 0;
+    font: inherit;
+    color: currentColor;
+    width: 1.5em;
+    height: 1.5em;
+    border: 0.15em solid currentColor;
+    border-radius: 50%;
+    transform: translateY(-0.075em);
+    display: grid;
+    place-content: center;
+}
+.likert-options input[type="radio"]::before {
+    content: "";
+    width: 0.8em;
+    height: 0.8em;
+    border-radius: 50%;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    box-shadow: inset 1em 1em var(--primary-color);
+}
+.likert-options input[type="radio"]:checked::before {
+    transform: scale(1);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+{# No custom JS needed for this quiz layout, but keeping the block for future use #}
+{% endblock %}
