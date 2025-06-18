@@ -3,7 +3,7 @@ name = "workspace"
 version = "0.1.0"
 description = ""
 authors = ["JaredJLG <147558015+JaredJLG@users.noreply.github.com>"]
-readme = "README.md"
+
 
 [tool.poetry.dependencies]
 python = "^3.11"
